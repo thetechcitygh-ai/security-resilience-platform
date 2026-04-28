@@ -1,4 +1,10 @@
-import React, { forwardRef, useMemo, useRef, useState } from "react";
+import React, { forwardRef, useEffect, useMemo, useRef, useState } from "react";
+import { createClient } from "@supabase/supabase-js";
+
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+const supabase = supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey) : null;
 
 const frameworks = [
   { key: "owasp", name: "OWASP Top 10", category: "Application Security", type: "technical" },
@@ -58,8 +64,11 @@ const doraMatrix = [
   { area: "Information sharing and reporting", platformControl: "Executive, technical and remediation report packs" }
 ];
 
-function getNow() {
-  return new Date().toLocaleString(undefined, {
+function formatDate(value) {
+  if (!value) return "Not available";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString(undefined, {
     year: "numeric",
     month: "short",
     day: "2-digit",
@@ -68,8 +77,8 @@ function getNow() {
   });
 }
 
-function makeId(prefix, number) {
-  return `${prefix}-${String(number).padStart(3, "0")}`;
+function getNow() {
+  return formatDate(new Date().toISOString());
 }
 
 function normaliseUrl(value) {
@@ -85,9 +94,7 @@ function getUrlScheme(value) {
 
 function classifyExposure(target) {
   const lower = target.toLowerCase();
-  if (lower.includes("localhost") || lower.includes(".local") || lower.includes("10.") || lower.includes("192.168.")) {
-    return "Private";
-  }
+  if (lower.includes("localhost") || lower.includes(".local") || lower.includes("10.") || lower.includes("192.168.")) return "Private";
   return "Public";
 }
 
@@ -108,72 +115,73 @@ function getRiskClass(risk) {
   return "bg-slate-50 text-slate-700 border-slate-200";
 }
 
-function highestRisk(findings) {
-  if (findings.some((item) => item.severity === "Critical")) return "Critical";
-  if (findings.some((item) => item.severity === "High")) return "High";
-  if (findings.some((item) => item.severity === "Medium")) return "Medium";
-  if (findings.some((item) => item.severity === "Low")) return "Low";
+function highestRisk(items) {
+  if (items.some((item) => item.severity === "Critical")) return "Critical";
+  if (items.some((item) => item.severity === "High")) return "High";
+  if (items.some((item) => item.severity === "Medium")) return "Medium";
+  if (items.some((item) => item.severity === "Low")) return "Low";
   return "Clean";
 }
 
-const Card = forwardRef(function Card({ children, className = "" }, ref) {
-  return (
-    <div ref={ref} className={`rounded-3xl border border-slate-200 bg-white shadow-sm ${className}`}>
-      {children}
-    </div>
-  );
-});
-
-function Pill({ children, className = "" }) {
-  return (
-    <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium ${className}`}>
-      {children}
-    </span>
-  );
-}
-
-function Button({ children, className = "", variant = "primary", disabled = false, ...props }) {
-  const variants = {
-    primary: "bg-slate-950 text-white hover:bg-slate-800 focus:ring-slate-950/10",
-    secondary: "border border-slate-200 bg-white text-slate-800 hover:bg-slate-50 focus:ring-slate-950/10",
-    success: "bg-emerald-500 text-white hover:bg-emerald-600 focus:ring-emerald-500/20",
-    info: "bg-blue-500 text-white hover:bg-blue-600 focus:ring-blue-500/20",
-    warning: "bg-amber-500 text-white hover:bg-amber-600 focus:ring-amber-500/20",
-    danger: "bg-red-500 text-white hover:bg-red-600 focus:ring-red-500/20"
+function toAsset(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    target: row.target,
+    owner: row.owner,
+    authorisationRef: row.authorisation_ref || "",
+    scope: row.scope || "Pending",
+    auth: row.auth || "Awaiting Sign-off",
+    exposure: row.exposure || "Public",
+    risk: row.risk || "Unknown",
+    urlScheme: row.url_scheme || "unspecified",
+    lastScan: row.last_scan || "Not started",
+    scanCount: row.scan_count || 0,
+    createdAt: row.created_at
   };
-
-  return (
-    <button
-      disabled={disabled}
-      className={`rounded-2xl px-5 py-3 text-sm font-semibold shadow-sm transition focus:outline-none focus:ring-4 ${variants[variant] || variants.primary} ${disabled ? "cursor-not-allowed opacity-50" : ""} ${className}`}
-      {...props}
-    >
-      {children}
-    </button>
-  );
 }
 
-function StatCard({ label, value, helper }) {
-  return (
-    <Card className="p-5">
-      <p className="text-sm text-slate-500">{label}</p>
-      <p className="mt-2 text-3xl font-bold text-slate-950">{value}</p>
-      <p className="mt-1 text-xs text-slate-500">{helper}</p>
-    </Card>
-  );
+function toFinding(row) {
+  return {
+    id: row.id,
+    assetId: row.asset_id,
+    title: row.title,
+    severity: row.severity,
+    cvss: Number(row.cvss || 0),
+    cwe: row.cwe || "N/A",
+    framework: row.framework || "N/A",
+    remediation: row.remediation || "",
+    evidence: row.evidence || "",
+    status: row.status || "Open",
+    owner: row.owner || "",
+    testingLevel: row.testing_level || "penetration",
+    target: row.target || "",
+    createdAt: row.created_at
+  };
 }
 
-function EmptyState({ title, message, action }) {
-  return (
-    <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center">
-      <p className="text-sm font-semibold text-slate-900">{title}</p>
-      <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500">{message}</p>
-      {action ? <div className="mt-4">{action}</div> : null}
-    </div>
-  );
+function toReport(row) {
+  return {
+    id: row.id,
+    title: row.title,
+    testingLevel: row.testing_level,
+    summary: row.summary || {},
+    sections: row.sections || [],
+    createdAt: row.created_at
+  };
 }
 
-function buildAssessmentResults({ asset, testingLevel, selectedFrameworks, currentCount }) {
+function toAudit(row) {
+  return {
+    id: row.id,
+    actor: row.actor,
+    action: row.action,
+    integrity: row.integrity || "SHA-256 placeholder",
+    time: formatDate(row.created_at)
+  };
+}
+
+function buildAssessmentResults({ asset, testingLevel, selectedFrameworks }) {
   const target = asset.target.toLowerCase();
   const hasHttps = asset.urlScheme === "https";
   const isPublic = asset.exposure === "Public";
@@ -264,17 +272,95 @@ function buildAssessmentResults({ asset, testingLevel, selectedFrameworks, curre
     });
   }
 
-  return generated.map((finding, index) => ({
-    id: `FND-${String(currentCount + index + 1).padStart(4, "0")}`,
-    assetId: asset.id,
-    asset: asset.name,
-    target: asset.target,
+  return generated.map((finding) => ({
+    asset_id: asset.id,
+    title: finding.title,
+    severity: finding.severity,
+    cvss: finding.cvss,
+    cwe: finding.cwe,
+    framework: finding.framework,
+    remediation: finding.remediation,
+    evidence: finding.evidence,
     status: finding.severity === "Informational" ? "Observed" : "Open",
     owner: asset.owner,
-    testingLevel,
-    createdAt: getNow(),
-    ...finding
+    testing_level: testingLevel,
+    target: asset.target
   }));
+}
+
+function runInlineTests() {
+  console.assert(normaliseUrl("https://example.com/") === "example.com", "normaliseUrl should remove protocol and trailing slash.");
+  console.assert(getUrlScheme("https://example.com") === "https", "getUrlScheme should detect HTTPS.");
+  console.assert(classifyExposure("192.168.1.1") === "Private", "classifyExposure should detect private IP ranges.");
+  console.assert(highestRisk([{ severity: "Low" }, { severity: "High" }]) === "High", "highestRisk should return highest available risk.");
+  const sampleAsset = { id: "asset-1", target: "login.example.com", exposure: "Public", urlScheme: "unspecified", owner: "Test Owner" };
+  const results = buildAssessmentResults({ asset: sampleAsset, testingLevel: "penetration", selectedFrameworks: ["dora"] });
+  console.assert(results.length >= 3, "buildAssessmentResults should create multiple baseline findings for a public login target without HTTPS.");
+}
+
+const Card = forwardRef(function Card({ children, className = "" }, ref) {
+  return <div ref={ref} className={`rounded-3xl border border-slate-200 bg-white shadow-sm ${className}`}>{children}</div>;
+});
+
+function Pill({ children, className = "" }) {
+  return <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium ${className}`}>{children}</span>;
+}
+
+function Button({ children, className = "", variant = "primary", disabled = false, ...props }) {
+  const variants = {
+    primary: "bg-slate-950 text-white hover:bg-slate-800 focus:ring-slate-950/10",
+    secondary: "border border-slate-200 bg-white text-slate-800 hover:bg-slate-50 focus:ring-slate-950/10",
+    success: "bg-emerald-500 text-white hover:bg-emerald-600 focus:ring-emerald-500/20",
+    info: "bg-blue-500 text-white hover:bg-blue-600 focus:ring-blue-500/20",
+    warning: "bg-amber-500 text-white hover:bg-amber-600 focus:ring-amber-500/20",
+    danger: "bg-red-500 text-white hover:bg-red-600 focus:ring-red-500/20"
+  };
+
+  return (
+    <button
+      disabled={disabled}
+      className={`rounded-2xl px-5 py-3 text-sm font-semibold shadow-sm transition focus:outline-none focus:ring-4 ${variants[variant] || variants.primary} ${disabled ? "cursor-not-allowed opacity-50" : ""} ${className}`}
+      {...props}
+    >
+      {children}
+    </button>
+  );
+}
+
+function StatCard({ label, value, helper }) {
+  return (
+    <Card className="p-5">
+      <p className="text-sm text-slate-500">{label}</p>
+      <p className="mt-2 text-3xl font-bold text-slate-950">{value}</p>
+      <p className="mt-1 text-xs text-slate-500">{helper}</p>
+    </Card>
+  );
+}
+
+function EmptyState({ title, message }) {
+  return (
+    <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center">
+      <p className="text-sm font-semibold text-slate-900">{title}</p>
+      <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500">{message}</p>
+    </div>
+  );
+}
+
+function FrameworkSelector({ selectedFrameworks, toggleFramework }) {
+  return (
+    <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+      {frameworks.map((framework) => (
+        <label key={framework.key} className="flex gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+          <input type="checkbox" checked={selectedFrameworks.includes(framework.key)} onChange={() => toggleFramework(framework.key)} className="mt-1" />
+          <span>
+            <span className="font-semibold">{framework.name}</span>
+            <br />
+            <span className="text-xs text-slate-500">{framework.category}</span>
+          </span>
+        </label>
+      ))}
+    </div>
+  );
 }
 
 export default function SecurityResiliencePlatform() {
@@ -288,7 +374,7 @@ export default function SecurityResiliencePlatform() {
   const [statusFilter, setStatusFilter] = useState("All");
   const [activeSection, setActiveSection] = useState("dashboard");
   const [scanState, setScanState] = useState("Ready");
-  const [notice, setNotice] = useState("Platform is ready. Add an authorised website or asset to begin.");
+  const [notice, setNotice] = useState(supabase ? "Loading saved platform data from Supabase..." : "Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to continue.");
   const [selectedAssetId, setSelectedAssetId] = useState("");
   const [selectedTestingLevel, setSelectedTestingLevel] = useState("penetration");
   const [selectedFrameworks, setSelectedFrameworks] = useState(["owasp", "nist", "ptes", "dora"]);
@@ -297,6 +383,8 @@ export default function SecurityResiliencePlatform() {
   const [newTargetOwner, setNewTargetOwner] = useState("");
   const [authorisationRef, setAuthorisationRef] = useState("");
   const [rulesAccepted, setRulesAccepted] = useState(false);
+  const [isLoading, setIsLoading] = useState(Boolean(supabase));
+  const [isSaving, setIsSaving] = useState(false);
 
   const dashboardRef = useRef(null);
   const scopeRef = useRef(null);
@@ -306,18 +394,49 @@ export default function SecurityResiliencePlatform() {
   const reportsRef = useRef(null);
   const auditRef = useRef(null);
 
-  const sectionRefs = {
-    dashboard: dashboardRef,
-    scope: scopeRef,
-    scanner: scannerRef,
-    testing: testingRef,
-    findings: findingsRef,
-    reports: reportsRef,
-    audit: auditRef
-  };
-
+  const sectionRefs = { dashboard: dashboardRef, scope: scopeRef, scanner: scannerRef, testing: testingRef, findings: findingsRef, reports: reportsRef, audit: auditRef };
   const selectedAsset = assets.find((asset) => asset.id === selectedAssetId) || null;
   const selectedLevel = testingLevels.find((level) => level.key === selectedTestingLevel) || testingLevels[0];
+
+  useEffect(() => {
+    runInlineTests();
+    if (supabase) loadPlatformData();
+  }, []);
+
+  async function loadPlatformData() {
+    if (!supabase) {
+      setNotice("Supabase is not configured. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.");
+      setIsLoading(false);
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const [assetsRes, findingsRes, reportsRes, auditRes] = await Promise.all([
+        supabase.from("assets").select("*").order("created_at", { ascending: false }),
+        supabase.from("findings").select("*").order("created_at", { ascending: false }),
+        supabase.from("reports").select("*").order("created_at", { ascending: false }),
+        supabase.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(100)
+      ]);
+
+      if (assetsRes.error) throw assetsRes.error;
+      if (findingsRes.error) throw findingsRes.error;
+      if (reportsRes.error) throw reportsRes.error;
+      if (auditRes.error) throw auditRes.error;
+
+      const loadedAssets = (assetsRes.data || []).map(toAsset);
+      setAssets(loadedAssets);
+      setFindings((findingsRes.data || []).map(toFinding));
+      setReports((reportsRes.data || []).map(toReport));
+      setAuditLog((auditRes.data || []).map(toAudit));
+      setSelectedAssetId(loadedAssets[0]?.id || "");
+      setNotice(loadedAssets.length ? "Saved platform data loaded from Supabase." : "Platform is ready. Add an authorised website or asset to begin.");
+    } catch (error) {
+      setNotice(`Supabase load failed: ${error.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  }
 
   const filteredFindings = useMemo(() => {
     return findings.filter((finding) => {
@@ -325,7 +444,6 @@ export default function SecurityResiliencePlatform() {
       const matchesSearch =
         !term ||
         finding.title.toLowerCase().includes(term) ||
-        finding.asset.toLowerCase().includes(term) ||
         finding.framework.toLowerCase().includes(term) ||
         finding.id.toLowerCase().includes(term) ||
         finding.target.toLowerCase().includes(term) ||
@@ -343,26 +461,34 @@ export default function SecurityResiliencePlatform() {
   const highFindings = findings.filter((finding) => finding.severity === "High").length;
   const activeFrameworkCoverage = assets.length > 0 ? Math.round((selectedFrameworks.length / frameworks.length) * 100) : 0;
 
-  function addAudit(action, actor = "Current User") {
-    setAuditLog((current) => [{ actor, action, time: getNow(), integrity: "SHA-256 placeholder" }, ...current]);
+  async function addAudit(action, actor = "Current User") {
+    const optimistic = { id: crypto.randomUUID(), actor, action, time: getNow(), integrity: "SHA-256 placeholder" };
+    setAuditLog((current) => [optimistic, ...current]);
+
+    if (!supabase) return;
+
+    const { data, error } = await supabase.from("audit_logs").insert({ actor, action, integrity: "SHA-256 placeholder" }).select().single();
+    if (!error && data) setAuditLog((current) => current.map((item) => (item.id === optimistic.id ? toAudit(data) : item)));
   }
 
   function goToSection(section) {
     setActiveSection(section);
     sectionRefs[section]?.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    addAudit(`Viewed ${section.replace("-", " ")} section`);
   }
 
   function toggleFramework(key) {
     setSelectedFrameworks((current) => {
-      if (current.includes(key)) {
-        return current.length === 1 ? current : current.filter((item) => item !== key);
-      }
+      if (current.includes(key)) return current.length === 1 ? current : current.filter((item) => item !== key);
       return [...current, key];
     });
   }
 
-  function addWebsiteTarget() {
+  async function addWebsiteTarget() {
+    if (!supabase) {
+      setNotice("Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY first.");
+      return;
+    }
+
     const rawUrl = newTargetUrl.trim();
     const cleanUrl = normaliseUrl(rawUrl);
     const cleanName = newTargetName.trim();
@@ -378,147 +504,172 @@ export default function SecurityResiliencePlatform() {
       return;
     }
 
-    const alreadyExists = assets.some((asset) => asset.target.toLowerCase() === cleanUrl.toLowerCase());
-    if (alreadyExists) {
+    if (assets.some((asset) => asset.target.toLowerCase() === cleanUrl.toLowerCase())) {
       setNotice("This target already exists in scope. Select it from the target list instead.");
       return;
     }
 
-    const newAsset = {
-      id: makeId("AST", assets.length + 1),
+    setIsSaving(true);
+    const payload = {
       name: cleanName,
       target: cleanUrl,
       owner: cleanOwner,
-      authorisationRef: authorisationRef.trim(),
-      rulesAccepted,
+      authorisation_ref: authorisationRef.trim(),
       scope: "Pending",
       auth: "Awaiting Sign-off",
       exposure: classifyExposure(cleanUrl),
       risk: "Unknown",
-      urlScheme: getUrlScheme(rawUrl),
-      createdAt: getNow(),
-      lastScan: "Not started",
-      scanCount: 0
+      url_scheme: getUrlScheme(rawUrl),
+      last_scan: "Not started",
+      scan_count: 0
     };
 
-    setAssets((current) => [...current, newAsset]);
-    setSelectedAssetId(newAsset.id);
+    const { data, error } = await supabase.from("assets").insert(payload).select().single();
+    setIsSaving(false);
+
+    if (error) {
+      setNotice(`Could not save target: ${error.message}`);
+      return;
+    }
+
+    const savedAsset = toAsset(data);
+    setAssets((current) => [savedAsset, ...current]);
+    setSelectedAssetId(savedAsset.id);
     setNewTargetName("");
     setNewTargetUrl("");
     setNewTargetOwner("");
     setAuthorisationRef("");
     setRulesAccepted(false);
-    setNotice(`${cleanName} has been added as a pending target. Review and authorise the scope before assessment.`);
-    addAudit(`Added target to scope: ${cleanName} (${cleanUrl})`);
+    setNotice(`${savedAsset.name} has been saved to Supabase as a pending target.`);
+    await addAudit(`Added target to scope: ${savedAsset.name} (${savedAsset.target})`);
   }
 
-  function approveSelectedTarget() {
+  async function approveSelectedTarget() {
+    if (!supabase) {
+      setNotice("Supabase is not configured. Add environment variables first.");
+      return;
+    }
+
     if (!selectedAsset) {
       setNotice("Please select a target to authorise.");
       return;
     }
 
-    setAssets((current) =>
-      current.map((asset) =>
-        asset.id === selectedAsset.id ? { ...asset, scope: "Locked", auth: "Approved" } : asset
-      )
-    );
+    const { data, error } = await supabase.from("assets").update({ scope: "Locked", auth: "Approved" }).eq("id", selectedAsset.id).select().single();
+    if (error) {
+      setNotice(`Could not authorise target: ${error.message}`);
+      return;
+    }
 
-    setNotice(`${selectedAsset.name} has been authorised and locked in scope.`);
-    addAudit(`Authorised and locked scope for ${selectedAsset.name}`, "Security Lead");
+    const updated = toAsset(data);
+    setAssets((current) => current.map((asset) => (asset.id === updated.id ? updated : asset)));
+    setNotice(`${updated.name} has been authorised and locked in scope.`);
+    await addAudit(`Authorised and locked scope for ${updated.name}`, "Security Lead");
   }
 
-  function runAssessment() {
+  async function runAssessment() {
+    if (!supabase) {
+      setNotice("Supabase is not configured. Add environment variables first.");
+      return;
+    }
+
     if (!selectedAsset) {
       setNotice("Please select a target before starting an assessment.");
-      addAudit("Attempted to start assessment without selecting a target", "System Guardrail");
+      await addAudit("Attempted to start assessment without selecting a target", "System Guardrail");
       return;
     }
 
     if (selectedAsset.auth !== "Approved") {
       setNotice(`${selectedAsset.name} is not approved yet. Authorise the scope before starting an assessment.`);
-      addAudit(`Blocked assessment for unapproved target: ${selectedAsset.name}`, "System Guardrail");
+      await addAudit(`Blocked assessment for unapproved target: ${selectedAsset.name}`, "System Guardrail");
       return;
     }
 
     setScanState("Running");
     setScanLogs([]);
     setNotice(`${selectedLevel.title} started for ${selectedAsset.name}. Frontend mode runs a guarded baseline simulation only.`);
-    addAudit(`Started ${selectedLevel.title} for ${selectedAsset.name}`, "Platform Scheduler");
+    await addAudit(`Started ${selectedLevel.title} for ${selectedAsset.name}`, "Platform Scheduler");
     goToSection("scanner");
 
-    const phases = selectedLevel.phases;
-    phases.forEach((phase, index) => {
+    selectedLevel.phases.forEach((phase, index) => {
       window.setTimeout(() => {
-        setScanLogs((current) => [
-          ...current,
-          {
-            time: getNow(),
-            phase,
-            message: `${phase} completed for ${selectedAsset.name}`
-          }
-        ]);
+        setScanLogs((current) => [...current, { time: getNow(), phase, message: `${phase} completed for ${selectedAsset.name}` }]);
       }, 350 * (index + 1));
     });
 
-    window.setTimeout(() => {
-      const newFindings = buildAssessmentResults({
-        asset: selectedAsset,
-        testingLevel: selectedTestingLevel,
-        selectedFrameworks,
-        currentCount: findings.length
-      });
-      const risk = highestRisk(newFindings);
+    window.setTimeout(async () => {
+      const generated = buildAssessmentResults({ asset: selectedAsset, testingLevel: selectedTestingLevel, selectedFrameworks });
+      const risk = highestRisk(generated);
+      const now = getNow();
 
-      setFindings((current) => [...newFindings, ...current]);
-      setAssets((current) =>
-        current.map((asset) =>
-          asset.id === selectedAsset.id
-            ? { ...asset, lastScan: getNow(), risk, scanCount: asset.scanCount + 1 }
-            : asset
-        )
-      );
+      const findingsRes = await supabase.from("findings").insert(generated).select();
+      if (findingsRes.error) {
+        setNotice(`Assessment completed but findings could not be saved: ${findingsRes.error.message}`);
+        setScanState("Completed");
+        return;
+      }
+
+      const assetRes = await supabase.from("assets").update({ last_scan: now, risk, scan_count: selectedAsset.scanCount + 1 }).eq("id", selectedAsset.id).select().single();
+      const savedFindings = (findingsRes.data || []).map(toFinding);
+      setFindings((current) => [...savedFindings, ...current]);
+
+      if (!assetRes.error && assetRes.data) {
+        const updatedAsset = toAsset(assetRes.data);
+        setAssets((current) => current.map((asset) => (asset.id === updatedAsset.id ? updatedAsset : asset)));
+      }
+
       setScanState("Completed");
-      setNotice(`${selectedLevel.title} completed for ${selectedAsset.name}. ${newFindings.length} result(s) generated.`);
-      addAudit(`Completed ${selectedLevel.title} for ${selectedAsset.name}; ${newFindings.length} result(s) generated`, "Platform Scheduler");
-    }, 350 * (phases.length + 2));
+      setNotice(`${selectedLevel.title} completed for ${selectedAsset.name}. ${savedFindings.length} finding(s) saved to Supabase.`);
+      await addAudit(`Completed ${selectedLevel.title} for ${selectedAsset.name}; ${savedFindings.length} finding(s) saved`, "Platform Scheduler");
+    }, 350 * (selectedLevel.phases.length + 2));
   }
 
-  function updateFindingStatus(id, status) {
+  async function updateFindingStatus(id, status) {
+    if (!supabase) {
+      setNotice("Supabase is not configured. Add environment variables first.");
+      return;
+    }
+
+    const previous = findings.find((finding) => finding.id === id);
     setFindings((current) => current.map((finding) => (finding.id === id ? { ...finding, status } : finding)));
-    addAudit(`Updated finding ${id} status to ${status}`, "Finding Owner");
+    const { error } = await supabase.from("findings").update({ status }).eq("id", id);
+
+    if (error) {
+      setNotice(`Could not update finding status: ${error.message}`);
+      if (previous) setFindings((current) => current.map((finding) => (finding.id === id ? previous : finding)));
+      return;
+    }
+
+    await addAudit(`Updated finding ${id.slice(0, 8)} status to ${status}`, "Finding Owner");
   }
 
-  function createReport() {
+  async function createReport() {
+    if (!supabase) {
+      setNotice("Supabase is not configured. Add environment variables first.");
+      return;
+    }
+
     if (assets.length === 0) {
       setNotice("There is no report to generate yet. Add and assess at least one target first.");
       return;
     }
 
-    const report = {
-      id: makeId("RPT", reports.length + 1),
-      title: `Security Resilience Report ${reports.length + 1}`,
-      createdAt: getNow(),
-      testingLevel: selectedLevel.title,
-      sections: reportSections,
-      summary: {
-        assetsInScope: assets.length,
-        approvedAssets,
-        pendingAssets,
-        totalFindings: findings.length,
-        openFindings,
-        criticalFindings,
-        highFindings,
-        activeFrameworkCoverage: `${activeFrameworkCoverage}%`
-      }
-    };
+    const summary = { assetsInScope: assets.length, approvedAssets, pendingAssets, totalFindings: findings.length, openFindings, criticalFindings, highFindings, activeFrameworkCoverage: `${activeFrameworkCoverage}%` };
+    const title = `Security Resilience Report ${reports.length + 1}`;
+    const { data, error } = await supabase.from("reports").insert({ title, testing_level: selectedLevel.title, summary, sections: reportSections }).select().single();
 
-    setReports((current) => [report, ...current]);
-    setNotice(`${report.title} has been generated and added to the report register.`);
-    addAudit(`Generated ${report.title}`, "Report Engine");
+    if (error) {
+      setNotice(`Could not generate report: ${error.message}`);
+      return;
+    }
+
+    const savedReport = toReport(data);
+    setReports((current) => [savedReport, ...current]);
+    setNotice(`${savedReport.title} has been saved to Supabase.`);
+    await addAudit(`Generated ${savedReport.title}`, "Report Engine");
   }
 
-  function exportReport() {
+  async function exportReport() {
     if (assets.length === 0) {
       setNotice("There is no report to export yet. Add and assess at least one target first.");
       return;
@@ -527,8 +678,8 @@ export default function SecurityResiliencePlatform() {
     const exportPack = {
       platform: "Security Resilience Platform",
       generatedAt: getNow(),
-      mode: "Frontend governed assessment prototype",
-      limitation: "This frontend produces governed baseline assessment outputs. Live vulnerability scanning requires an authorised backend scanner worker, evidence vault and secure job queue.",
+      mode: "Supabase-connected frontend assessment platform",
+      limitation: "Live vulnerability scanning still requires an authorised backend scanner worker, evidence vault and secure job queue.",
       assets,
       findings,
       reports,
@@ -546,39 +697,38 @@ export default function SecurityResiliencePlatform() {
     URL.revokeObjectURL(url);
 
     setNotice("Report exported as JSON.");
-    addAudit("Exported security resilience report data", "Report Engine");
+    await addAudit("Exported security resilience report data", "Report Engine");
   }
 
-  function printPdfPack() {
+  async function printPdfPack() {
     if (assets.length === 0) {
       setNotice("There is no PDF pack to generate yet. Add and assess at least one target first.");
       return;
     }
-
     setNotice("Use the browser print dialog to save the current report view as PDF.");
-    addAudit("Opened browser print workflow for PDF report pack", "Report Engine");
+    await addAudit("Opened browser print workflow for PDF report pack", "Report Engine");
     window.print();
   }
 
-  function configureRules() {
-    setNotice("Rules active: written authority required, scope lock required, non-destructive frontend mode, audit logging enabled and unapproved assessments blocked.");
-    addAudit("Viewed configured platform guardrails");
+  async function configureRules() {
+    setNotice("Rules active: written authority required, scope lock required, Supabase persistence enabled, audit logging enabled and unapproved assessments blocked.");
+    await addAudit("Viewed configured platform guardrails");
   }
 
-  function viewRoadmap() {
+  async function viewRoadmap() {
     setNotice("Production roadmap: FastAPI backend, PostgreSQL, scanner job queue, OWASP ZAP/Nuclei integrations, evidence vault, PDF service, RBAC and client portal.");
-    addAudit("Viewed implementation roadmap");
+    await addAudit("Viewed implementation roadmap");
   }
 
-  function clearWorkspace() {
+  function clearLocalView() {
     setAssets([]);
     setFindings([]);
-    setAuditLog([]);
     setReports([]);
+    setAuditLog([]);
     setScanLogs([]);
     setSelectedAssetId("");
     setScanState("Ready");
-    setNotice("Workspace cleared. Add an authorised website or asset to begin.");
+    setNotice("Local view cleared only. Supabase data remains intact. Refresh or click reload to retrieve saved data.");
   }
 
   return (
@@ -591,29 +741,13 @@ export default function SecurityResiliencePlatform() {
               <h1 className="mt-1 text-xl font-bold">Security Resilience Platform</h1>
             </div>
             <nav className="mt-5 space-y-2">
-              {[
-                ["dashboard", "Dashboard"],
-                ["scope", "Scope Manager"],
-                ["scanner", "Scanner"],
-                ["testing", "Testing Levels"],
-                ["findings", "Findings"],
-                ["reports", "Reports"],
-                ["audit", "Audit Log"]
-              ].map(([key, label]) => (
-                <button
-                  key={key}
-                  onClick={() => goToSection(key)}
-                  className={`w-full rounded-2xl px-4 py-3 text-left text-sm font-medium transition ${
-                    activeSection === key ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
-                  }`}
-                >
-                  {label}
-                </button>
+              {[["dashboard", "Dashboard"], ["scope", "Scope Manager"], ["scanner", "Scanner"], ["testing", "Testing Levels"], ["findings", "Findings"], ["reports", "Reports"], ["audit", "Audit Log"]].map(([key, label]) => (
+                <button key={key} onClick={() => goToSection(key)} className={`w-full rounded-2xl px-4 py-3 text-left text-sm font-medium transition ${activeSection === key ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"}`}>{label}</button>
               ))}
             </nav>
-            <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-800">
-              <p className="text-sm font-semibold">Guardrails Active</p>
-              <p className="mt-2 text-xs leading-5">No target can be assessed until scope is recorded, authorised and locked.</p>
+            <div className={`mt-5 rounded-2xl border p-4 ${supabase ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+              <p className="text-sm font-semibold">{supabase ? "Supabase Persistence Active" : "Supabase Not Configured"}</p>
+              <p className="mt-2 text-xs leading-5">{supabase ? "Targets, findings, reports and audit events are saved to your database." : "Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your environment."}</p>
             </div>
           </div>
         </aside>
@@ -626,17 +760,13 @@ export default function SecurityResiliencePlatform() {
                   <Pill className="border-slate-700 bg-slate-900 text-slate-200">Private Cloud Ready</Pill>
                   <Pill className="border-emerald-700 bg-emerald-900 text-emerald-100">White-hat Only</Pill>
                   <Pill className="border-blue-700 bg-blue-900 text-blue-100">DORA / EBA / TIBER-EU</Pill>
-                  <Pill className="border-purple-700 bg-purple-900 text-purple-100">Status: {scanState}</Pill>
+                  <Pill className="border-purple-700 bg-purple-900 text-purple-100">Status: {isLoading ? "Loading" : scanState}</Pill>
                 </div>
                 <h2 className="mt-5 text-3xl font-bold tracking-tight md:text-5xl">Cyber Security Resilience Platform</h2>
-                <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300 md:text-base">
-                  A governed one-stop assessment workspace covering scope, authorisation, scanning workflow, findings, CVSS-style scoring, regulatory mapping, reporting and audit evidence.
-                </p>
+                <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300 md:text-base">A Supabase-connected governed workspace for scope, authorisation, assessment workflow, findings, reporting and audit evidence.</p>
               </div>
               <div className="flex flex-wrap gap-3">
-                <Button onClick={runAssessment} variant="success" disabled={scanState === "Running"}>
-                  {scanState === "Running" ? "Running..." : "Start Approved Assessment"}
-                </Button>
+                <Button onClick={runAssessment} variant="success" disabled={scanState === "Running" || isLoading}>{scanState === "Running" ? "Running..." : "Start Approved Assessment"}</Button>
                 <Button onClick={exportReport} variant="info">Export Report</Button>
               </div>
             </div>
@@ -648,7 +778,7 @@ export default function SecurityResiliencePlatform() {
             <StatCard label="Targets" value={assets.length} helper={`${approvedAssets} approved, ${pendingAssets} pending`} />
             <StatCard label="Open Findings" value={openFindings} helper={`${criticalFindings} critical, ${highFindings} high`} />
             <StatCard label="Framework Coverage" value={`${activeFrameworkCoverage}%`} helper={`${selectedFrameworks.length} of ${frameworks.length} active`} />
-            <StatCard label="Reports" value={reports.length} helper="Generated report register" />
+            <StatCard label="Reports" value={reports.length} helper="Saved report register" />
           </section>
 
           <section className="mt-6 grid gap-6 xl:grid-cols-3">
@@ -656,25 +786,9 @@ export default function SecurityResiliencePlatform() {
               <h2 className="text-xl font-semibold">Dashboard</h2>
               <p className="mt-1 text-sm text-slate-500">Real-time posture across scope, testing level, findings, reports and audit activity.</p>
               <div className="mt-6 grid gap-3 md:grid-cols-5">
-                {[
-                  ["Authorise", approvedAssets > 0],
-                  ["Configure", selectedFrameworks.length > 0],
-                  ["Assess", scanState === "Running" || scanState === "Completed"],
-                  ["Validate", findings.length > 0],
-                  ["Report", reports.length > 0]
-                ].map(([stage, isDone]) => {
+                {[["Authorise", approvedAssets > 0], ["Configure", selectedFrameworks.length > 0], ["Assess", scanState === "Running" || scanState === "Completed"], ["Validate", findings.length > 0], ["Report", reports.length > 0]].map(([stage, isDone]) => {
                   const isActive = scanState === "Running" && stage === "Assess";
-                  return (
-                    <div
-                      key={stage}
-                      className={`rounded-2xl border p-4 ${
-                        isActive ? "border-purple-200 bg-purple-50" : isDone ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-white"
-                      }`}
-                    >
-                      <p className="text-sm font-semibold">{stage}</p>
-                      <p className="mt-1 text-xs text-slate-500">{isActive ? "Running" : isDone ? "Ready" : "Awaiting gate"}</p>
-                    </div>
-                  );
+                  return <div key={stage} className={`rounded-2xl border p-4 ${isActive ? "border-purple-200 bg-purple-50" : isDone ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-white"}`}><p className="text-sm font-semibold">{stage}</p><p className="mt-1 text-xs text-slate-500">{isActive ? "Running" : isDone ? "Ready" : "Awaiting gate"}</p></div>;
                 })}
               </div>
             </Card>
@@ -682,11 +796,7 @@ export default function SecurityResiliencePlatform() {
               <h2 className="text-xl font-semibold">Active Testing Level</h2>
               <p className="mt-2 text-sm font-medium text-slate-900">{selectedLevel.title}</p>
               <p className="mt-1 text-sm text-slate-500">{selectedLevel.description}</p>
-              <div className="mt-4 flex flex-wrap gap-2">
-                {selectedLevel.controls.map((control) => (
-                  <Pill key={control} className="border-slate-200 bg-slate-50 text-slate-700">{control}</Pill>
-                ))}
-              </div>
+              <div className="mt-4 flex flex-wrap gap-2">{selectedLevel.controls.map((control) => <Pill key={control} className="border-slate-200 bg-slate-50 text-slate-700">{control}</Pill>)}</div>
             </Card>
           </section>
 
@@ -695,80 +805,21 @@ export default function SecurityResiliencePlatform() {
               <h2 className="text-xl font-semibold">Target Scope Manager</h2>
               <p className="mt-1 text-sm text-slate-500">Add only assets you own or have written permission to test.</p>
               <div className="mt-5 grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <input
-                  value={newTargetName}
-                  onChange={(event) => setNewTargetName(event.target.value)}
-                  placeholder="Target name e.g. Client Portal"
-                  className="h-10 rounded-2xl border border-slate-200 bg-white px-4 text-sm outline-none focus:ring-4 focus:ring-slate-950/10"
-                />
-                <input
-                  value={newTargetUrl}
-                  onChange={(event) => setNewTargetUrl(event.target.value)}
-                  placeholder="Website URL e.g. https://portal.example.com"
-                  className="h-10 rounded-2xl border border-slate-200 bg-white px-4 text-sm outline-none focus:ring-4 focus:ring-slate-950/10"
-                />
-                <input
-                  value={newTargetOwner}
-                  onChange={(event) => setNewTargetOwner(event.target.value)}
-                  placeholder="Owner / client name"
-                  className="h-10 rounded-2xl border border-slate-200 bg-white px-4 text-sm outline-none focus:ring-4 focus:ring-slate-950/10"
-                />
-                <input
-                  value={authorisationRef}
-                  onChange={(event) => setAuthorisationRef(event.target.value)}
-                  placeholder="Authorisation reference e.g. contract ID, email approval, signed scope"
-                  className="h-10 rounded-2xl border border-slate-200 bg-white px-4 text-sm outline-none focus:ring-4 focus:ring-slate-950/10"
-                />
-                <label className="flex gap-3 rounded-2xl border border-slate-200 bg-white p-3 text-sm text-slate-700">
-                  <input
-                    type="checkbox"
-                    checked={rulesAccepted}
-                    onChange={(event) => setRulesAccepted(event.target.checked)}
-                    className="mt-1"
-                  />
-                  <span>I confirm written permission exists and testing will remain within authorised scope.</span>
-                </label>
-                <Button onClick={addWebsiteTarget}>Add Target to Scope</Button>
+                <input value={newTargetName} onChange={(event) => setNewTargetName(event.target.value)} placeholder="Target name e.g. Client Portal" className="h-10 rounded-2xl border border-slate-200 bg-white px-4 text-sm outline-none focus:ring-4 focus:ring-slate-950/10" />
+                <input value={newTargetUrl} onChange={(event) => setNewTargetUrl(event.target.value)} placeholder="Website URL e.g. https://portal.example.com" className="h-10 rounded-2xl border border-slate-200 bg-white px-4 text-sm outline-none focus:ring-4 focus:ring-slate-950/10" />
+                <input value={newTargetOwner} onChange={(event) => setNewTargetOwner(event.target.value)} placeholder="Owner / client name" className="h-10 rounded-2xl border border-slate-200 bg-white px-4 text-sm outline-none focus:ring-4 focus:ring-slate-950/10" />
+                <input value={authorisationRef} onChange={(event) => setAuthorisationRef(event.target.value)} placeholder="Authorisation reference e.g. contract ID, email approval, signed scope" className="h-10 rounded-2xl border border-slate-200 bg-white px-4 text-sm outline-none focus:ring-4 focus:ring-slate-950/10" />
+                <label className="flex gap-3 rounded-2xl border border-slate-200 bg-white p-3 text-sm text-slate-700"><input type="checkbox" checked={rulesAccepted} onChange={(event) => setRulesAccepted(event.target.checked)} className="mt-1" /><span>I confirm written permission exists and testing will remain within authorised scope.</span></label>
+                <Button onClick={addWebsiteTarget} disabled={isSaving}>{isSaving ? "Saving..." : "Add Target to Scope"}</Button>
               </div>
             </Card>
-
             <Card className="p-6">
               <h2 className="text-xl font-semibold">Authorisation Gate</h2>
-              {assets.length === 0 ? (
-                <EmptyState title="No targets added" message="Add a target first. The authorisation gate will appear here." />
-              ) : (
+              {assets.length === 0 ? <EmptyState title="No targets added" message="Add a target first. The authorisation gate will appear here." /> : (
                 <div className="mt-4 space-y-3">
-                  <select
-                    value={selectedAssetId}
-                    onChange={(event) => setSelectedAssetId(event.target.value)}
-                    className="h-10 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm outline-none focus:ring-4 focus:ring-slate-950/10"
-                  >
-                    {assets.map((asset) => (
-                      <option key={asset.id} value={asset.id}>{asset.name} — {asset.target} — {asset.auth}</option>
-                    ))}
-                  </select>
+                  <select value={selectedAssetId} onChange={(event) => setSelectedAssetId(event.target.value)} className="h-10 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm outline-none focus:ring-4 focus:ring-slate-950/10">{assets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name} — {asset.target} — {asset.auth}</option>)}</select>
                   <Button onClick={approveSelectedTarget} variant="warning">Authorise Selected Target</Button>
-                  <div className="space-y-3">
-                    {assets.map((asset) => (
-                      <div key={asset.id} className="rounded-2xl border border-slate-200 bg-white p-4">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                          <div>
-                            <p className="text-sm font-semibold">{asset.name}</p>
-                            <p className="mt-1 text-xs text-slate-500">{asset.target}</p>
-                            <p className="mt-1 text-xs text-slate-400">Owner: {asset.owner}</p>
-                            <p className="mt-1 text-xs text-slate-400">Last assessment: {asset.lastScan}</p>
-                          </div>
-                          <Pill className={asset.auth === "Approved" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}>{asset.auth}</Pill>
-                        </div>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <Pill className="border-slate-200 bg-slate-50 text-slate-700">{asset.scope}</Pill>
-                          <Pill className="border-slate-200 bg-slate-50 text-slate-700">{asset.exposure}</Pill>
-                          <Pill className={getRiskClass(asset.risk)}>Risk: {asset.risk}</Pill>
-                          <Pill className="border-slate-200 bg-slate-50 text-slate-700">Runs: {asset.scanCount}</Pill>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  <div className="space-y-3">{assets.map((asset) => <div key={asset.id} className="rounded-2xl border border-slate-200 bg-white p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><p className="text-sm font-semibold">{asset.name}</p><p className="mt-1 text-xs text-slate-500">{asset.target}</p><p className="mt-1 text-xs text-slate-400">Owner: {asset.owner}</p><p className="mt-1 text-xs text-slate-400">Last assessment: {asset.lastScan}</p></div><Pill className={asset.auth === "Approved" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}>{asset.auth}</Pill></div><div className="mt-3 flex flex-wrap gap-2"><Pill className="border-slate-200 bg-slate-50 text-slate-700">{asset.scope}</Pill><Pill className="border-slate-200 bg-slate-50 text-slate-700">{asset.exposure}</Pill><Pill className={getRiskClass(asset.risk)}>Risk: {asset.risk}</Pill><Pill className="border-slate-200 bg-slate-50 text-slate-700">Runs: {asset.scanCount}</Pill></div></div>)}</div>
                 </div>
               )}
             </Card>
@@ -778,263 +829,25 @@ export default function SecurityResiliencePlatform() {
             <Card className="p-6 xl:col-span-2">
               <h2 className="text-xl font-semibold">Scanner</h2>
               <p className="mt-1 text-sm text-slate-500">Configure authorised assessment level and framework coverage before initiating.</p>
-              <div className="mt-5 grid gap-4 md:grid-cols-2">
-                <div>
-                  <label className="text-sm font-medium text-slate-700">Testing Level</label>
-                  <select
-                    value={selectedTestingLevel}
-                    onChange={(event) => setSelectedTestingLevel(event.target.value)}
-                    className="mt-2 h-10 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm outline-none focus:ring-4 focus:ring-slate-950/10"
-                  >
-                    {testingLevels.map((level) => (
-                      <option key={level.key} value={level.key}>{level.title}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-slate-700">Target</label>
-                  <select
-                    value={selectedAssetId}
-                    onChange={(event) => setSelectedAssetId(event.target.value)}
-                    className="mt-2 h-10 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm outline-none focus:ring-4 focus:ring-slate-950/10"
-                  >
-                    <option value="">Select authorised target</option>
-                    {assets.map((asset) => (
-                      <option key={asset.id} value={asset.id}>{asset.name} — {asset.auth}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <div className="mt-5">
-                <p className="text-sm font-medium text-slate-700">Active Frameworks</p>
-                <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {frameworks.map((framework) => (
-                    <label key={framework.key} className="flex gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
-                      <input
-                        type="checkbox"
-                        checked={selectedFrameworks.includes(framework.key)}
-                        onChange={() => toggleFramework(framework.key)}
-                        className="mt-1"
-                      />
-                      <span>
-                        <span className="font-semibold">{framework.name}</span>
-                        <br />
-                        <span className="text-xs text-slate-500">{framework.category}</span>
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-              <Button onClick={runAssessment} variant="success" disabled={scanState === "Running"} className="mt-5">
-                Initiate Authorised Assessment
-              </Button>
+              <div className="mt-5 grid gap-4 md:grid-cols-2"><div><label className="text-sm font-medium text-slate-700">Testing Level</label><select value={selectedTestingLevel} onChange={(event) => setSelectedTestingLevel(event.target.value)} className="mt-2 h-10 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm outline-none focus:ring-4 focus:ring-slate-950/10">{testingLevels.map((level) => <option key={level.key} value={level.key}>{level.title}</option>)}</select></div><div><label className="text-sm font-medium text-slate-700">Target</label><select value={selectedAssetId} onChange={(event) => setSelectedAssetId(event.target.value)} className="mt-2 h-10 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm outline-none focus:ring-4 focus:ring-slate-950/10"><option value="">Select authorised target</option>{assets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name} — {asset.auth}</option>)}</select></div></div>
+              <div className="mt-5"><p className="text-sm font-medium text-slate-700">Active Frameworks</p><FrameworkSelector selectedFrameworks={selectedFrameworks} toggleFramework={toggleFramework} /></div>
+              <Button onClick={runAssessment} variant="success" disabled={scanState === "Running"} className="mt-5">Initiate Authorised Assessment</Button>
             </Card>
-
-            <Card className="p-6">
-              <h2 className="text-xl font-semibold">Live Console</h2>
-              <div className="mt-4 max-h-80 space-y-3 overflow-auto rounded-2xl bg-slate-950 p-4 text-xs text-slate-100">
-                {scanLogs.length === 0 ? (
-                  <p className="text-slate-400">Console idle. Start an authorised assessment to stream phases.</p>
-                ) : (
-                  scanLogs.map((log, index) => (
-                    <div key={`${log.phase}-${index}`}>
-                      <p className="text-emerald-300">[{log.time}] {log.phase}</p>
-                      <p className="text-slate-300">{log.message}</p>
-                    </div>
-                  ))
-                )}
-              </div>
-            </Card>
+            <Card className="p-6"><h2 className="text-xl font-semibold">Live Console</h2><div className="mt-4 max-h-80 space-y-3 overflow-auto rounded-2xl bg-slate-950 p-4 text-xs text-slate-100">{scanLogs.length === 0 ? <p className="text-slate-400">Console idle. Start an authorised assessment to stream phases.</p> : scanLogs.map((log, index) => <div key={`${log.phase}-${index}`}><p className="text-emerald-300">[{log.time}] {log.phase}</p><p className="text-slate-300">{log.message}</p></div>)}</div></Card>
           </section>
 
-          <section ref={testingRef} className="mt-6 grid gap-6 xl:grid-cols-3">
-            {testingLevels.map((level) => (
-              <Card key={level.key} className={`p-6 ${selectedTestingLevel === level.key ? "ring-4 ring-blue-500/10" : ""}`}>
-                <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">{level.subtitle}</p>
-                <h2 className="mt-2 text-lg font-semibold">{level.title}</h2>
-                <p className="mt-2 text-sm leading-6 text-slate-600">{level.description}</p>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {level.controls.map((control) => (
-                    <Pill key={control} className="border-slate-200 bg-slate-50 text-slate-700">{control}</Pill>
-                  ))}
-                </div>
-              </Card>
-            ))}
-          </section>
+          <section ref={testingRef} className="mt-6 grid gap-6 xl:grid-cols-3">{testingLevels.map((level) => <Card key={level.key} className={`p-6 ${selectedTestingLevel === level.key ? "ring-4 ring-blue-500/10" : ""}`}><p className="text-xs font-semibold uppercase tracking-wide text-blue-600">{level.subtitle}</p><h2 className="mt-2 text-lg font-semibold">{level.title}</h2><p className="mt-2 text-sm leading-6 text-slate-600">{level.description}</p><div className="mt-4 flex flex-wrap gap-2">{level.controls.map((control) => <Pill key={control} className="border-slate-200 bg-slate-50 text-slate-700">{control}</Pill>)}</div></Card>)}</section>
 
           <section ref={findingsRef} className="mt-6 grid gap-6 xl:grid-cols-3">
-            <Card className="p-6 xl:col-span-2">
-              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <h2 className="text-xl font-semibold">Findings</h2>
-                  <p className="mt-1 text-sm text-slate-500">CVSS-style scoring, CWE references, framework mapping and remediation guidance.</p>
-                </div>
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <input
-                    value={query}
-                    onChange={(event) => setQuery(event.target.value)}
-                    placeholder="Search findings"
-                    className="h-10 rounded-2xl border border-slate-200 px-4 text-sm outline-none focus:ring-4 focus:ring-slate-950/10"
-                  />
-                  <select
-                    value={severityFilter}
-                    onChange={(event) => setSeverityFilter(event.target.value)}
-                    className="h-10 rounded-2xl border border-slate-200 px-4 text-sm outline-none focus:ring-4 focus:ring-slate-950/10"
-                  >
-                    {["All", "Critical", "High", "Medium", "Low", "Informational"].map((item) => (
-                      <option key={item}>{item}</option>
-                    ))}
-                  </select>
-                  <select
-                    value={statusFilter}
-                    onChange={(event) => setStatusFilter(event.target.value)}
-                    className="h-10 rounded-2xl border border-slate-200 px-4 text-sm outline-none focus:ring-4 focus:ring-slate-950/10"
-                  >
-                    {["All", "Open", "In Review", "Remediated", "Observed"].map((item) => (
-                      <option key={item}>{item}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="mt-5 divide-y divide-slate-200 overflow-hidden rounded-2xl border border-slate-200 bg-white">
-                {filteredFindings.length === 0 ? (
-                  <div className="p-5">
-                    <EmptyState
-                      title="No findings yet"
-                      message="Run an authorised assessment. Results, remediation guidance, evidence notes and framework mapping will appear here."
-                    />
-                  </div>
-                ) : (
-                  filteredFindings.map((finding) => (
-                    <div key={finding.id} className="p-4">
-                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                        <div>
-                          <p className="text-sm font-semibold text-slate-900">{finding.title}</p>
-                          <p className="mt-1 text-xs text-slate-500">{finding.id} · {finding.framework} · {finding.cwe}</p>
-                          <p className="mt-2 text-xs leading-5 text-slate-500">{finding.remediation}</p>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          <Pill className={getSeverityClass(finding.severity)}>{finding.severity} · CVSS {finding.cvss}</Pill>
-                          <select
-                            value={finding.status}
-                            onChange={(event) => updateFindingStatus(finding.id, event.target.value)}
-                            className="rounded-2xl border border-slate-200 px-3 py-1 text-xs"
-                          >
-                            {["Open", "In Review", "Remediated", "Observed"].map((item) => (
-                              <option key={item}>{item}</option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </Card>
-
-            <Card className="p-6">
-              <h2 className="text-xl font-semibold">DORA / EBA / TIBER-EU Matrix</h2>
-              <div className="mt-4 space-y-3">
-                {doraMatrix.map((item) => (
-                  <div key={item.area} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                    <p className="text-sm font-semibold">{item.area}</p>
-                    <p className="mt-1 text-xs leading-5 text-slate-500">{item.platformControl}</p>
-                  </div>
-                ))}
-              </div>
-            </Card>
+            <Card className="p-6 xl:col-span-2"><div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between"><div><h2 className="text-xl font-semibold">Findings</h2><p className="mt-1 text-sm text-slate-500">CVSS-style scoring, CWE references, framework mapping and remediation guidance.</p></div><div className="flex flex-col gap-2 sm:flex-row"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search findings" className="h-10 rounded-2xl border border-slate-200 px-4 text-sm outline-none focus:ring-4 focus:ring-slate-950/10" /><select value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value)} className="h-10 rounded-2xl border border-slate-200 px-4 text-sm outline-none focus:ring-4 focus:ring-slate-950/10">{["All", "Critical", "High", "Medium", "Low", "Informational"].map((item) => <option key={item}>{item}</option>)}</select><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-10 rounded-2xl border border-slate-200 px-4 text-sm outline-none focus:ring-4 focus:ring-slate-950/10">{["All", "Open", "In Review", "Remediated", "Observed"].map((item) => <option key={item}>{item}</option>)}</select></div></div><div className="mt-5 divide-y divide-slate-200 overflow-hidden rounded-2xl border border-slate-200 bg-white">{filteredFindings.length === 0 ? <div className="p-5"><EmptyState title="No findings yet" message="Run an authorised assessment. Results, remediation guidance, evidence notes and framework mapping will appear here." /></div> : filteredFindings.map((finding) => <div key={finding.id} className="p-4"><div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between"><div><p className="text-sm font-semibold text-slate-900">{finding.title}</p><p className="mt-1 text-xs text-slate-500">{finding.id.slice(0, 8)} · {finding.framework} · {finding.cwe}</p><p className="mt-2 text-xs leading-5 text-slate-500">{finding.remediation}</p></div><div className="flex flex-wrap gap-2"><Pill className={getSeverityClass(finding.severity)}>{finding.severity} · CVSS {finding.cvss}</Pill><select value={finding.status} onChange={(event) => updateFindingStatus(finding.id, event.target.value)} className="rounded-2xl border border-slate-200 px-3 py-1 text-xs">{["Open", "In Review", "Remediated", "Observed"].map((item) => <option key={item}>{item}</option>)}</select></div></div></div>)}</div></Card>
+            <Card className="p-6"><h2 className="text-xl font-semibold">DORA / EBA / TIBER-EU Matrix</h2><div className="mt-4 space-y-3">{doraMatrix.map((item) => <div key={item.area} className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p className="text-sm font-semibold">{item.area}</p><p className="mt-1 text-xs leading-5 text-slate-500">{item.platformControl}</p></div>)}</div></Card>
           </section>
 
-          <section ref={reportsRef} className="mt-6 grid gap-6 xl:grid-cols-2">
-            <Card className="p-6">
-              <h2 className="text-xl font-semibold">Reports</h2>
-              <p className="mt-1 text-sm text-slate-500">Generate report packs with executive, technical, remediation and regulatory sections.</p>
-              <div className="mt-5 grid gap-2 sm:grid-cols-2">
-                {reportSections.map((section) => (
-                  <div key={section} className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm font-medium text-slate-700">
-                    {section}
-                  </div>
-                ))}
-              </div>
-              <div className="mt-5 flex flex-wrap gap-3">
-                <Button onClick={createReport}>Generate Report</Button>
-                <Button onClick={exportReport} variant="info">Export JSON</Button>
-                <Button onClick={printPdfPack} variant="secondary">Print / Save PDF</Button>
-              </div>
-            </Card>
+          <section ref={reportsRef} className="mt-6 grid gap-6 xl:grid-cols-2"><Card className="p-6"><h2 className="text-xl font-semibold">Reports</h2><p className="mt-1 text-sm text-slate-500">Generate report packs with executive, technical, remediation and regulatory sections.</p><div className="mt-5 grid gap-2 sm:grid-cols-2">{reportSections.map((section) => <div key={section} className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm font-medium text-slate-700">{section}</div>)}</div><div className="mt-5 flex flex-wrap gap-3"><Button onClick={createReport}>Generate Report</Button><Button onClick={exportReport} variant="info">Export JSON</Button><Button onClick={printPdfPack} variant="secondary">Print / Save PDF</Button></div></Card><Card className="p-6"><h2 className="text-xl font-semibold">Report Register</h2><div className="mt-4 space-y-3">{reports.length === 0 ? <EmptyState title="No reports generated" message="Generate a report after adding a target and running an assessment." /> : reports.map((report) => <div key={report.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p className="text-sm font-semibold">{report.title}</p><p className="mt-1 text-xs text-slate-500">{report.id.slice(0, 8)} · {formatDate(report.createdAt)} · {report.testingLevel}</p></div>)}</div></Card></section>
 
-            <Card className="p-6">
-              <h2 className="text-xl font-semibold">Report Register</h2>
-              <div className="mt-4 space-y-3">
-                {reports.length === 0 ? (
-                  <EmptyState title="No reports generated" message="Generate a report after adding a target and running an assessment." />
-                ) : (
-                  reports.map((report) => (
-                    <div key={report.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                      <p className="text-sm font-semibold">{report.title}</p>
-                      <p className="mt-1 text-xs text-slate-500">{report.id} · {report.createdAt} · {report.testingLevel}</p>
-                    </div>
-                  ))
-                )}
-              </div>
-            </Card>
-          </section>
+          <section ref={auditRef} className="mt-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"><div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"><div><h2 className="text-xl font-semibold">Audit Log</h2><p className="mt-1 text-sm text-slate-500">Every action is timestamped, attributed and retained for audit review.</p></div><div className="flex flex-wrap gap-3"><Button onClick={loadPlatformData} variant="secondary">Reload Supabase Data</Button><Button onClick={configureRules} variant="secondary">Configure Rules</Button><Button onClick={viewRoadmap} variant="info">View Roadmap</Button><Button onClick={clearLocalView} variant="danger">Clear Local View</Button></div></div><div className="mt-5 max-h-96 space-y-3 overflow-auto">{auditLog.length === 0 ? <EmptyState title="No audit events yet" message="Actions such as adding targets, authorising scope, running assessments, changing findings and generating reports will appear here." /> : auditLog.map((item) => <div key={item.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p className="text-sm font-semibold">{item.action}</p><p className="mt-1 text-xs text-slate-500">{item.actor} · {item.time} · {item.integrity}</p></div>)}</div></section>
 
-          <section ref={auditRef} className="mt-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <h2 className="text-xl font-semibold">Audit Log</h2>
-                <p className="mt-1 text-sm text-slate-500">
-                  Every action is timestamped, attributed and retained for audit review. Integrity hash shown as a backend placeholder.
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-3">
-                <Button onClick={configureRules} variant="secondary">Configure Rules</Button>
-                <Button onClick={viewRoadmap} variant="info">View Roadmap</Button>
-                <Button onClick={clearWorkspace} variant="danger">Clear Workspace</Button>
-              </div>
-            </div>
-            <div className="mt-5 max-h-96 space-y-3 overflow-auto">
-              {auditLog.length === 0 ? (
-                <EmptyState
-                  title="No audit events yet"
-                  message="Actions such as adding targets, authorising scope, running assessments, changing findings and generating reports will appear here."
-                />
-              ) : (
-                auditLog.map((item, index) => (
-                  <div key={`${item.action}-${index}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                    <p className="text-sm font-semibold">{item.action}</p>
-                    <p className="mt-1 text-xs text-slate-500">{item.actor} · {item.time} · {item.integrity}</p>
-                  </div>
-                ))
-              )}
-            </div>
-          </section>
-
-          <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <h2 className="text-xl font-semibold">Production Build Roadmap</h2>
-            <p className="mt-2 max-w-4xl text-sm leading-6 text-slate-600">
-              The frontend is now MITC-aligned and operational without sample data. To achieve live vulnerability assessment objectives, connect it to a backend API, scanner workers, secure storage and report generation services.
-            </p>
-            <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {[
-                ["Backend API", "Python/FastAPI for assets, scans, findings, reports and users."],
-                ["Scanner Workers", "Authorised integrations for ZAP, Nuclei, Nmap and Nikto in controlled jobs."],
-                ["Evidence Vault", "Store screenshots, logs, approvals, exports and report versions."],
-                ["PDF Engine", "Server-side branded reports with executive and technical sections."],
-                ["RBAC & MFA", "Secure multi-user and multi-client access control."],
-                ["Client Portal", "Client approvals, findings review and remediation tracking."],
-                ["DORA Matrix", "Automated mapping to resilience and ICT-risk obligations."],
-                ["Retesting", "Track remediation verification and closure evidence."]
-              ].map(([module, desc]) => (
-                <div key={module} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <p className="text-sm font-semibold">{module}</p>
-                  <p className="mt-1 text-xs leading-5 text-slate-500">{desc}</p>
-                </div>
-              ))}
-            </div>
-          </section>
+          <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"><h2 className="text-xl font-semibold">Production Build Roadmap</h2><p className="mt-2 max-w-4xl text-sm leading-6 text-slate-600">Supabase now gives persistence for this platform. The next phase is a secure backend API and scanner worker layer for real evidence-based vulnerability reports.</p><div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{[["Backend API", "Python/FastAPI for scan jobs and report orchestration."], ["Scanner Workers", "Authorised integrations for ZAP, Nuclei, Nmap and Nikto."], ["Evidence Vault", "Store screenshots, logs, approvals and report versions."], ["PDF Engine", "Server-side branded executive and technical reports."], ["RBAC & MFA", "Secure multi-user and multi-client access control."], ["Client Portal", "Client approvals, findings review and remediation tracking."], ["DORA Matrix", "Automated mapping to resilience and ICT-risk obligations."], ["Retesting", "Track remediation verification and closure evidence."]].map(([module, desc]) => <div key={module} className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p className="text-sm font-semibold">{module}</p><p className="mt-1 text-xs leading-5 text-slate-500">{desc}</p></div>)}</div></section>
         </main>
       </div>
     </div>
