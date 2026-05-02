@@ -177,23 +177,38 @@ def run_zap_baseline(job_id: str, target_url: str) -> dict:
     html_report = f"{job_id}-zap-report.html"
     json_report = f"{job_id}-zap-report.json"
 
-    command = [
-        "docker",
-        "run",
-        "--rm",
-        "-v",
-        f"{OUTPUT_DIR}:/zap/wrk/:rw",
-        "zaproxy/zap-stable",
-        "zap-baseline.py",
-        "-t",
-        target_url,
-        "-r",
-        html_report,
-        "-J",
-        json_report,
-        "-m",
-        "1"
-    ]
+    use_docker = os.getenv("USE_DOCKER_FOR_ZAP", "false").lower() == "true"
+
+    if use_docker:
+        command = [
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            f"{OUTPUT_DIR}:/zap/wrk/:rw",
+            "zaproxy/zap-stable",
+            "zap-baseline.py",
+            "-t",
+            target_url,
+            "-r",
+            html_report,
+            "-J",
+            json_report,
+            "-m",
+            "1"
+        ]
+    else:
+        command = [
+            "zap-baseline.py",
+            "-t",
+            target_url,
+            "-r",
+            html_report,
+            "-J",
+            json_report,
+            "-m",
+            "1"
+        ]
 
     completed = subprocess.run(
         command,
@@ -217,7 +232,6 @@ def run_zap_baseline(job_id: str, target_url: str) -> dict:
         "json_report": str(OUTPUT_DIR / json_report),
         "console_log": str(log_path)
     }
-
 
 def zap_risk_to_platform_severity(alert: Dict[str, Any]) -> str:
     risk = str(alert.get("riskdesc") or alert.get("risk") or "").lower()
