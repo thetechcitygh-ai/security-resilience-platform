@@ -1,11 +1,24 @@
 import React, { forwardRef, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const viteEnv = import.meta.env || {};
+
+const supabaseUrl = viteEnv.VITE_SUPABASE_URL || "";
+const supabaseAnonKey = viteEnv.VITE_SUPABASE_ANON_KEY || "";
+const apiBaseUrl = viteEnv.VITE_API_BASE_URL || "http://localhost:8000";
+
+function getEnvValue(key, fallback = "") {
+  return viteEnv[key] || fallback;
+}
+
+console.log("SUPABASE ENV CHECK", {
+  hasSupabaseUrl: Boolean(supabaseUrl),
+  supabaseUrlPreview: supabaseUrl ? `${supabaseUrl.slice(0, 30)}...` : "missing",
+  hasAnonKey: Boolean(supabaseAnonKey),
+  apiBaseUrl
+});
 
 const supabase = supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey) : null;
-
 const frameworks = [
   { key: "owasp", name: "OWASP Top 10", category: "Application Security", type: "technical" },
   { key: "nist", name: "NIST SP 800-115", category: "Technical Security Testing", type: "technical" },
@@ -115,14 +128,6 @@ function getRiskClass(risk) {
   return "bg-slate-50 text-slate-700 border-slate-200";
 }
 
-function highestRisk(items) {
-  if (items.some((item) => item.severity === "Critical")) return "Critical";
-  if (items.some((item) => item.severity === "High")) return "High";
-  if (items.some((item) => item.severity === "Medium")) return "Medium";
-  if (items.some((item) => item.severity === "Low")) return "Low";
-  return "Clean";
-}
-
 function toAsset(row) {
   return {
     id: row.id,
@@ -181,121 +186,31 @@ function toAudit(row) {
   };
 }
 
-function buildAssessmentResults({ asset, testingLevel, selectedFrameworks }) {
-  const target = asset.target.toLowerCase();
-  const hasHttps = asset.urlScheme === "https";
-  const isPublic = asset.exposure === "Public";
-  const looksLikeLogin = target.includes("portal") || target.includes("login") || target.includes("app") || target.includes("auth");
-  const generated = [];
+async function createBackendScanJob({ asset, testingLevel, selectedFrameworks }) {
+  const response = await fetch(`${apiBaseUrl}/scan-jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      asset_id: asset.id,
+      target_url: asset.target.startsWith("http") ? asset.target : `https://${asset.target}`,
+      testing_level: testingLevel,
+      frameworks: selectedFrameworks,
+      authorised: asset.auth === "Approved",
+      authorisation_ref: asset.authorisationRef || "Recorded in Supabase"
+    })
+  });
 
-  if (!hasHttps && isPublic) {
-    generated.push({
-      title: "HTTPS posture requires validation",
-      severity: "High",
-      cvss: 7.4,
-      cwe: "CWE-319",
-      framework: "OWASP A02 / NIST SP 800-115",
-      remediation: "Confirm HTTPS enforcement, certificate validity, secure redirects and transport security policy for the public-facing asset.",
-      evidence: "The submitted public target did not explicitly include an https:// URL scheme."
-    });
-  }
-
-  if (isPublic) {
-    generated.push({
-      title: "Public exposure requires security hardening baseline",
-      severity: "Medium",
-      cvss: 5.6,
-      cwe: "CWE-693",
-      framework: "OWASP A05 / PTES Vulnerability Analysis",
-      remediation: "Validate security headers, exposed metadata, content security policy, cookie flags and platform hardening controls.",
-      evidence: "The target is classified as public-facing and should be validated against a web hardening baseline."
-    });
-  }
-
-  if (looksLikeLogin) {
-    generated.push({
-      title: "Authentication resilience review required",
-      severity: "High",
-      cvss: 8.0,
-      cwe: "CWE-307",
-      framework: "OWASP A07 / CEH Enumeration Control",
-      remediation: "Validate MFA, rate limiting, account lockout, secure session management, privileged access controls and alerting.",
-      evidence: "The target name or URL suggests a login portal or authenticated application."
-    });
-  }
-
-  if (testingLevel === "red-team") {
-    generated.push({
-      title: "Threat-led detection and response coverage should be evidenced",
-      severity: "Medium",
-      cvss: 5.4,
-      cwe: "N/A",
-      framework: "TIBER-EU / DORA Resilience Testing",
-      remediation: "Define red-team objectives, detection expectations, escalation channels, debrief approach and purple-team learning outcomes.",
-      evidence: "Red teaming level selected. The platform requires a governed scenario, kill switch and executive mandate."
-    });
-  }
-
-  if (testingLevel === "scenario") {
-    generated.push({
-      title: "Operational resilience scenario requires response validation",
-      severity: "Medium",
-      cvss: 5.2,
-      cwe: "N/A",
-      framework: "DORA / EBA ICT Risk / TIBER-EU",
-      remediation: "Validate response roles, continuity objectives, decision escalation, communication paths and post-test lessons learned.",
-      evidence: "Scenario-based testing selected. Resilience readiness should be validated beyond technical vulnerability checks."
-    });
-  }
-
-  if (selectedFrameworks.includes("dora")) {
-    generated.push({
-      title: "DORA-aligned evidence retention should be maintained",
-      severity: "Low",
-      cvss: 3.1,
-      cwe: "N/A",
-      framework: "DORA / NIST SP 800-115 Reporting",
-      remediation: "Retain scope approvals, testing records, findings, remediation notes, report versions and responsible owners in an evidence vault.",
-      evidence: "DORA framework selected. The workflow should preserve audit-ready operational resilience evidence."
-    });
-  }
-
-  if (generated.length === 0) {
-    generated.push({
-      title: "No immediate issue generated by safe baseline simulation",
-      severity: "Informational",
-      cvss: 0.0,
-      cwe: "N/A",
-      framework: "NIST SP 800-115 Reporting",
-      remediation: "Proceed with approved backend technical validation and evidence capture where authorised.",
-      evidence: "No rule-based concern was generated from the metadata supplied in this frontend prototype."
-    });
-  }
-
-  return generated.map((finding) => ({
-    asset_id: asset.id,
-    title: finding.title,
-    severity: finding.severity,
-    cvss: finding.cvss,
-    cwe: finding.cwe,
-    framework: finding.framework,
-    remediation: finding.remediation,
-    evidence: finding.evidence,
-    status: finding.severity === "Informational" ? "Observed" : "Open",
-    owner: asset.owner,
-    testing_level: testingLevel,
-    target: asset.target
-  }));
+  if (!response.ok) throw new Error(`Backend API returned ${response.status}`);
+  return response.json();
 }
 
 function runInlineTests() {
+  console.assert(getEnvValue("NON_EXISTENT_TEST_KEY", "fallback") === "fallback", "getEnvValue should safely return fallback.");
   console.assert(normaliseUrl("https://example.com/") === "example.com", "normaliseUrl should remove protocol and trailing slash.");
   console.assert(getUrlScheme("https://example.com") === "https", "getUrlScheme should detect HTTPS.");
   console.assert(classifyExposure("192.168.1.1") === "Private", "classifyExposure should detect private IP ranges.");
-  console.assert(highestRisk([{ severity: "Low" }, { severity: "High" }]) === "High", "highestRisk should return highest available risk.");
-  const sampleAsset = { id: "asset-1", target: "login.example.com", exposure: "Public", urlScheme: "unspecified", owner: "Test Owner" };
-  const results = buildAssessmentResults({ asset: sampleAsset, testingLevel: "penetration", selectedFrameworks: ["dora"] });
-  console.assert(results.length >= 3, "buildAssessmentResults should create multiple baseline findings for a public login target without HTTPS.");
+  console.assert(apiBaseUrl.length > 0, "apiBaseUrl should be configured or default to localhost.");
+  console.assert(typeof createBackendScanJob === "function", "createBackendScanJob should exist for backend scanner orchestration.");
 }
 
 const Card = forwardRef(function Card({ children, className = "" }, ref) {
@@ -317,11 +232,7 @@ function Button({ children, className = "", variant = "primary", disabled = fals
   };
 
   return (
-    <button
-      disabled={disabled}
-      className={`rounded-2xl px-5 py-3 text-sm font-semibold shadow-sm transition focus:outline-none focus:ring-4 ${variants[variant] || variants.primary} ${disabled ? "cursor-not-allowed opacity-50" : ""} ${className}`}
-      {...props}
-    >
+    <button disabled={disabled} className={`rounded-2xl px-5 py-3 text-sm font-semibold shadow-sm transition focus:outline-none focus:ring-4 ${variants[variant] || variants.primary} ${disabled ? "cursor-not-allowed opacity-50" : ""} ${className}`} {...props}>
       {children}
     </button>
   );
@@ -352,11 +263,7 @@ function FrameworkSelector({ selectedFrameworks, toggleFramework }) {
       {frameworks.map((framework) => (
         <label key={framework.key} className="flex gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
           <input type="checkbox" checked={selectedFrameworks.includes(framework.key)} onChange={() => toggleFramework(framework.key)} className="mt-1" />
-          <span>
-            <span className="font-semibold">{framework.name}</span>
-            <br />
-            <span className="text-xs text-slate-500">{framework.category}</span>
-          </span>
+          <span><span className="font-semibold">{framework.name}</span><br /><span className="text-xs text-slate-500">{framework.category}</span></span>
         </label>
       ))}
     </div>
@@ -393,7 +300,6 @@ export default function SecurityResiliencePlatform() {
   const findingsRef = useRef(null);
   const reportsRef = useRef(null);
   const auditRef = useRef(null);
-
   const sectionRefs = { dashboard: dashboardRef, scope: scopeRef, scanner: scannerRef, testing: testingRef, findings: findingsRef, reports: reportsRef, audit: auditRef };
   const selectedAsset = assets.find((asset) => asset.id === selectedAssetId) || null;
   const selectedLevel = testingLevels.find((level) => level.key === selectedTestingLevel) || testingLevels[0];
@@ -409,7 +315,6 @@ export default function SecurityResiliencePlatform() {
       setIsLoading(false);
       return;
     }
-
     setIsLoading(true);
     try {
       const [assetsRes, findingsRes, reportsRes, auditRes] = await Promise.all([
@@ -418,12 +323,10 @@ export default function SecurityResiliencePlatform() {
         supabase.from("reports").select("*").order("created_at", { ascending: false }),
         supabase.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(100)
       ]);
-
       if (assetsRes.error) throw assetsRes.error;
       if (findingsRes.error) throw findingsRes.error;
       if (reportsRes.error) throw reportsRes.error;
       if (auditRes.error) throw auditRes.error;
-
       const loadedAssets = (assetsRes.data || []).map(toAsset);
       setAssets(loadedAssets);
       setFindings((findingsRes.data || []).map(toFinding));
@@ -438,21 +341,13 @@ export default function SecurityResiliencePlatform() {
     }
   }
 
-  const filteredFindings = useMemo(() => {
-    return findings.filter((finding) => {
-      const term = query.toLowerCase().trim();
-      const matchesSearch =
-        !term ||
-        finding.title.toLowerCase().includes(term) ||
-        finding.framework.toLowerCase().includes(term) ||
-        finding.id.toLowerCase().includes(term) ||
-        finding.target.toLowerCase().includes(term) ||
-        finding.cwe.toLowerCase().includes(term);
-      const matchesSeverity = severityFilter === "All" || finding.severity === severityFilter;
-      const matchesStatus = statusFilter === "All" || finding.status === statusFilter;
-      return matchesSearch && matchesSeverity && matchesStatus;
-    });
-  }, [findings, query, severityFilter, statusFilter]);
+  const filteredFindings = useMemo(() => findings.filter((finding) => {
+    const term = query.toLowerCase().trim();
+    const matchesSearch = !term || finding.title.toLowerCase().includes(term) || finding.framework.toLowerCase().includes(term) || finding.id.toLowerCase().includes(term) || finding.target.toLowerCase().includes(term) || finding.cwe.toLowerCase().includes(term);
+    const matchesSeverity = severityFilter === "All" || finding.severity === severityFilter;
+    const matchesStatus = statusFilter === "All" || finding.status === statusFilter;
+    return matchesSearch && matchesSeverity && matchesStatus;
+  }), [findings, query, severityFilter, statusFilter]);
 
   const approvedAssets = assets.filter((asset) => asset.auth === "Approved").length;
   const pendingAssets = assets.filter((asset) => asset.auth !== "Approved").length;
@@ -464,9 +359,7 @@ export default function SecurityResiliencePlatform() {
   async function addAudit(action, actor = "Current User") {
     const optimistic = { id: crypto.randomUUID(), actor, action, time: getNow(), integrity: "SHA-256 placeholder" };
     setAuditLog((current) => [optimistic, ...current]);
-
     if (!supabase) return;
-
     const { data, error } = await supabase.from("audit_logs").insert({ actor, action, integrity: "SHA-256 placeholder" }).select().single();
     if (!error && data) setAuditLog((current) => current.map((item) => (item.id === optimistic.id ? toAudit(data) : item)));
   }
@@ -477,10 +370,7 @@ export default function SecurityResiliencePlatform() {
   }
 
   function toggleFramework(key) {
-    setSelectedFrameworks((current) => {
-      if (current.includes(key)) return current.length === 1 ? current : current.filter((item) => item !== key);
-      return [...current, key];
-    });
+    setSelectedFrameworks((current) => current.includes(key) ? (current.length === 1 ? current : current.filter((item) => item !== key)) : [...current, key]);
   }
 
   async function addWebsiteTarget() {
@@ -488,50 +378,30 @@ export default function SecurityResiliencePlatform() {
       setNotice("Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY first.");
       return;
     }
-
     const rawUrl = newTargetUrl.trim();
     const cleanUrl = normaliseUrl(rawUrl);
     const cleanName = newTargetName.trim();
     const cleanOwner = newTargetOwner.trim();
-
     if (!cleanName || !cleanUrl || !cleanOwner) {
       setNotice("Please provide the target name, website URL and owner or client name.");
       return;
     }
-
     if (!authorisationRef.trim() || !rulesAccepted) {
       setNotice("Please provide an authorisation reference and confirm the rules of engagement before adding the target.");
       return;
     }
-
     if (assets.some((asset) => asset.target.toLowerCase() === cleanUrl.toLowerCase())) {
       setNotice("This target already exists in scope. Select it from the target list instead.");
       return;
     }
-
     setIsSaving(true);
-    const payload = {
-      name: cleanName,
-      target: cleanUrl,
-      owner: cleanOwner,
-      authorisation_ref: authorisationRef.trim(),
-      scope: "Pending",
-      auth: "Awaiting Sign-off",
-      exposure: classifyExposure(cleanUrl),
-      risk: "Unknown",
-      url_scheme: getUrlScheme(rawUrl),
-      last_scan: "Not started",
-      scan_count: 0
-    };
-
+    const payload = { name: cleanName, target: cleanUrl, owner: cleanOwner, authorisation_ref: authorisationRef.trim(), scope: "Pending", auth: "Awaiting Sign-off", exposure: classifyExposure(cleanUrl), risk: "Unknown", url_scheme: getUrlScheme(rawUrl), last_scan: "Not started", scan_count: 0 };
     const { data, error } = await supabase.from("assets").insert(payload).select().single();
     setIsSaving(false);
-
     if (error) {
       setNotice(`Could not save target: ${error.message}`);
       return;
     }
-
     const savedAsset = toAsset(data);
     setAssets((current) => [savedAsset, ...current]);
     setSelectedAssetId(savedAsset.id);
@@ -549,120 +419,123 @@ export default function SecurityResiliencePlatform() {
       setNotice("Supabase is not configured. Add environment variables first.");
       return;
     }
-
     if (!selectedAsset) {
       setNotice("Please select a target to authorise.");
       return;
     }
-
     const { data, error } = await supabase.from("assets").update({ scope: "Locked", auth: "Approved" }).eq("id", selectedAsset.id).select().single();
     if (error) {
       setNotice(`Could not authorise target: ${error.message}`);
       return;
     }
-
     const updated = toAsset(data);
     setAssets((current) => current.map((asset) => (asset.id === updated.id ? updated : asset)));
     setNotice(`${updated.name} has been authorised and locked in scope.`);
     await addAudit(`Authorised and locked scope for ${updated.name}`, "Security Lead");
   }
+async function runAssessment() {
+  if (!supabase) {
+    setNotice("Supabase is not configured. Add environment variables first.");
+    return;
+  }
 
-  async function runAssessment() {
-    if (!supabase) {
-      setNotice("Supabase is not configured. Add environment variables first.");
-      return;
+  if (!selectedAsset) {
+    setNotice("Please select a target before starting an assessment.");
+    await addAudit("Attempted to start assessment without selecting a target", "System Guardrail");
+    return;
+  }
+
+  if (selectedAsset.auth !== "Approved") {
+    setNotice(`${selectedAsset.name} is not approved yet. Authorise the scope before starting an assessment.`);
+    await addAudit(`Blocked assessment for unapproved target: ${selectedAsset.name}`, "System Guardrail");
+    return;
+  }
+
+  setScanState("Running");
+  setScanLogs([
+    {
+      time: getNow(),
+      phase: "Backend scan requested",
+      message: `Sending ${selectedAsset.name} to FastAPI backend at ${apiBaseUrl}.`
     }
+  ]);
+  setNotice(`Backend scan requested for ${selectedAsset.name}. Please wait while OWASP ZAP runs.`);
+  goToSection("scanner");
 
-    if (!selectedAsset) {
-      setNotice("Please select a target before starting an assessment.");
-      await addAudit("Attempted to start assessment without selecting a target", "System Guardrail");
-      return;
-    }
+  await addAudit(`Requested backend scan for ${selectedAsset.name}`, "Platform Scheduler");
 
-    if (selectedAsset.auth !== "Approved") {
-      setNotice(`${selectedAsset.name} is not approved yet. Authorise the scope before starting an assessment.`);
-      await addAudit(`Blocked assessment for unapproved target: ${selectedAsset.name}`, "System Guardrail");
-      return;
-    }
-
-    setScanState("Running");
-    setScanLogs([]);
-    setNotice(`${selectedLevel.title} started for ${selectedAsset.name}. Frontend mode runs a guarded baseline simulation only.`);
-    await addAudit(`Started ${selectedLevel.title} for ${selectedAsset.name}`, "Platform Scheduler");
-    goToSection("scanner");
-
-    selectedLevel.phases.forEach((phase, index) => {
-      window.setTimeout(() => {
-        setScanLogs((current) => [...current, { time: getNow(), phase, message: `${phase} completed for ${selectedAsset.name}` }]);
-      }, 350 * (index + 1));
+  try {
+    const backendJob = await createBackendScanJob({
+      asset: selectedAsset,
+      testingLevel: selectedTestingLevel,
+      selectedFrameworks
     });
 
-    window.setTimeout(async () => {
-      const generated = buildAssessmentResults({ asset: selectedAsset, testingLevel: selectedTestingLevel, selectedFrameworks });
-      const risk = highestRisk(generated);
-      const now = getNow();
-
-      const findingsRes = await supabase.from("findings").insert(generated).select();
-      if (findingsRes.error) {
-        setNotice(`Assessment completed but findings could not be saved: ${findingsRes.error.message}`);
-        setScanState("Completed");
-        return;
+    setScanLogs((current) => [
+      ...current,
+      {
+        time: getNow(),
+        phase: "Backend response received",
+        message: `${backendJob.job_id} returned status: ${backendJob.status}. ${backendJob.message || ""}`
       }
+    ]);
 
-      const assetRes = await supabase.from("assets").update({ last_scan: now, risk, scan_count: selectedAsset.scanCount + 1 }).eq("id", selectedAsset.id).select().single();
-      const savedFindings = (findingsRes.data || []).map(toFinding);
-      setFindings((current) => [...savedFindings, ...current]);
-
-      if (!assetRes.error && assetRes.data) {
-        const updatedAsset = toAsset(assetRes.data);
-        setAssets((current) => current.map((asset) => (asset.id === updatedAsset.id ? updatedAsset : asset)));
-      }
-
-      setScanState("Completed");
-      setNotice(`${selectedLevel.title} completed for ${selectedAsset.name}. ${savedFindings.length} finding(s) saved to Supabase.`);
-      await addAudit(`Completed ${selectedLevel.title} for ${selectedAsset.name}; ${savedFindings.length} finding(s) saved`, "Platform Scheduler");
-    }, 350 * (selectedLevel.phases.length + 2));
-  }
-
-  async function updateFindingStatus(id, status) {
-    if (!supabase) {
-      setNotice("Supabase is not configured. Add environment variables first.");
+    if (backendJob.status === "blocked") {
+      setScanState("Ready");
+      setNotice(backendJob.message || "Backend blocked this assessment request.");
+      await addAudit(`Backend blocked assessment for ${selectedAsset.name}`, "System Guardrail");
       return;
     }
 
-    const previous = findings.find((finding) => finding.id === id);
-    setFindings((current) => current.map((finding) => (finding.id === id ? { ...finding, status } : finding)));
-    const { error } = await supabase.from("findings").update({ status }).eq("id", id);
-
-    if (error) {
-      setNotice(`Could not update finding status: ${error.message}`);
-      if (previous) setFindings((current) => current.map((finding) => (finding.id === id ? previous : finding)));
+    if (backendJob.status === "failed" || backendJob.status === "timeout") {
+      setScanState("Ready");
+      setNotice(backendJob.message || "Backend scan failed.");
+      await addAudit(`Backend scan failed for ${selectedAsset.name}: ${backendJob.message}`, "System Guardrail");
       return;
     }
 
-    await addAudit(`Updated finding ${id.slice(0, 8)} status to ${status}`, "Finding Owner");
-  }
+    await loadPlatformData();
 
+    setScanState("Completed");
+    setNotice(
+      backendJob.message ||
+        `${selectedLevel.title} completed for ${selectedAsset.name}. Backend scanner findings have been reloaded from Supabase.`
+    );
+
+    await addAudit(
+      `Completed ${selectedLevel.title} for ${selectedAsset.name}; backend job ${backendJob.job_id} returned ${backendJob.saved_findings || 0} finding(s)`,
+      "Platform Scheduler"
+    );
+  } catch (error) {
+    setScanState("Ready");
+    setScanLogs((current) => [
+      ...current,
+      {
+        time: getNow(),
+        phase: "Backend error",
+        message: error.message
+      }
+    ]);
+    setNotice(`Backend API connection failed: ${error.message}. Confirm FastAPI is running on ${apiBaseUrl}.`);
+    await addAudit(`Backend scan-job request failed for ${selectedAsset.name}: ${error.message}`, "System Guardrail");
+  }
+}
   async function createReport() {
     if (!supabase) {
       setNotice("Supabase is not configured. Add environment variables first.");
       return;
     }
-
     if (assets.length === 0) {
       setNotice("There is no report to generate yet. Add and assess at least one target first.");
       return;
     }
-
     const summary = { assetsInScope: assets.length, approvedAssets, pendingAssets, totalFindings: findings.length, openFindings, criticalFindings, highFindings, activeFrameworkCoverage: `${activeFrameworkCoverage}%` };
     const title = `Security Resilience Report ${reports.length + 1}`;
     const { data, error } = await supabase.from("reports").insert({ title, testing_level: selectedLevel.title, summary, sections: reportSections }).select().single();
-
     if (error) {
       setNotice(`Could not generate report: ${error.message}`);
       return;
     }
-
     const savedReport = toReport(data);
     setReports((current) => [savedReport, ...current]);
     setNotice(`${savedReport.title} has been saved to Supabase.`);
@@ -674,20 +547,7 @@ export default function SecurityResiliencePlatform() {
       setNotice("There is no report to export yet. Add and assess at least one target first.");
       return;
     }
-
-    const exportPack = {
-      platform: "Security Resilience Platform",
-      generatedAt: getNow(),
-      mode: "Supabase-connected frontend assessment platform",
-      limitation: "Live vulnerability scanning still requires an authorised backend scanner worker, evidence vault and secure job queue.",
-      assets,
-      findings,
-      reports,
-      selectedFrameworks: frameworks.filter((framework) => selectedFrameworks.includes(framework.key)),
-      doraMatrix,
-      auditLog
-    };
-
+    const exportPack = { platform: "Security Resilience Platform", generatedAt: getNow(), mode: "Supabase-connected frontend assessment platform", limitation: "Live vulnerability scanning still requires an authorised backend scanner worker, evidence vault and secure job queue.", assets, findings, reports, selectedFrameworks: frameworks.filter((framework) => selectedFrameworks.includes(framework.key)), doraMatrix, auditLog };
     const blob = new Blob([JSON.stringify(exportPack, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -695,7 +555,6 @@ export default function SecurityResiliencePlatform() {
     link.download = `security-resilience-report-${Date.now()}.json`;
     link.click();
     URL.revokeObjectURL(url);
-
     setNotice("Report exported as JSON.");
     await addAudit("Exported security resilience report data", "Report Engine");
   }
@@ -761,6 +620,7 @@ export default function SecurityResiliencePlatform() {
                   <Pill className="border-emerald-700 bg-emerald-900 text-emerald-100">White-hat Only</Pill>
                   <Pill className="border-blue-700 bg-blue-900 text-blue-100">DORA / EBA / TIBER-EU</Pill>
                   <Pill className="border-purple-700 bg-purple-900 text-purple-100">Status: {isLoading ? "Loading" : scanState}</Pill>
+                  <Pill className="border-slate-700 bg-slate-900 text-slate-200">API: {apiBaseUrl.replace(/^https?:\/\//, "")}</Pill>
                 </div>
                 <h2 className="mt-5 text-3xl font-bold tracking-tight md:text-5xl">Cyber Security Resilience Platform</h2>
                 <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300 md:text-base">A Supabase-connected governed workspace for scope, authorisation, assessment workflow, findings, reporting and audit evidence.</p>
@@ -847,7 +707,7 @@ export default function SecurityResiliencePlatform() {
 
           <section ref={auditRef} className="mt-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"><div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"><div><h2 className="text-xl font-semibold">Audit Log</h2><p className="mt-1 text-sm text-slate-500">Every action is timestamped, attributed and retained for audit review.</p></div><div className="flex flex-wrap gap-3"><Button onClick={loadPlatformData} variant="secondary">Reload Supabase Data</Button><Button onClick={configureRules} variant="secondary">Configure Rules</Button><Button onClick={viewRoadmap} variant="info">View Roadmap</Button><Button onClick={clearLocalView} variant="danger">Clear Local View</Button></div></div><div className="mt-5 max-h-96 space-y-3 overflow-auto">{auditLog.length === 0 ? <EmptyState title="No audit events yet" message="Actions such as adding targets, authorising scope, running assessments, changing findings and generating reports will appear here." /> : auditLog.map((item) => <div key={item.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p className="text-sm font-semibold">{item.action}</p><p className="mt-1 text-xs text-slate-500">{item.actor} · {item.time} · {item.integrity}</p></div>)}</div></section>
 
-          <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"><h2 className="text-xl font-semibold">Production Build Roadmap</h2><p className="mt-2 max-w-4xl text-sm leading-6 text-slate-600">Supabase now gives persistence for this platform. The next phase is a secure backend API and scanner worker layer for real evidence-based vulnerability reports.</p><div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{[["Backend API", "Python/FastAPI for scan jobs and report orchestration."], ["Scanner Workers", "Authorised integrations for ZAP, Nuclei, Nmap and Nikto."], ["Evidence Vault", "Store screenshots, logs, approvals and report versions."], ["PDF Engine", "Server-side branded executive and technical reports."], ["RBAC & MFA", "Secure multi-user and multi-client access control."], ["Client Portal", "Client approvals, findings review and remediation tracking."], ["DORA Matrix", "Automated mapping to resilience and ICT-risk obligations."], ["Retesting", "Track remediation verification and closure evidence."]].map(([module, desc]) => <div key={module} className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p className="text-sm font-semibold">{module}</p><p className="mt-1 text-xs leading-5 text-slate-500">{desc}</p></div>)}</div></section>
+          <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"><h2 className="text-xl font-semibold">Production Build Roadmap</h2><p className="mt-2 max-w-4xl text-sm leading-6 text-slate-600">Supabase gives persistence and the frontend now calls the FastAPI backend before assessments begin. Findings are now expected to come from the backend scanner layer instead of frontend-generated simulations.</p><div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{[["Backend API", "Python/FastAPI for scan jobs and report orchestration."], ["Scanner Workers", "Authorised integrations for ZAP, Nuclei, Nmap and Nikto."], ["Evidence Vault", "Store screenshots, logs, approvals and report versions."], ["PDF Engine", "Server-side branded executive and technical reports."], ["RBAC & MFA", "Secure multi-user and multi-client access control."], ["Client Portal", "Client approvals, findings review and remediation tracking."], ["DORA Matrix", "Automated mapping to resilience and ICT-risk obligations."], ["Retesting", "Track remediation verification and closure evidence."]].map(([module, desc]) => <div key={module} className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p className="text-sm font-semibold">{module}</p><p className="mt-1 text-xs leading-5 text-slate-500">{desc}</p></div>)}</div></section>
         </main>
       </div>
     </div>
